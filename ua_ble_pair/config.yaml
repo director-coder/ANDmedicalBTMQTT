@@ -15,7 +15,9 @@ init: false
 host_dbus: true
 
 # Для BLE часто требуется расширенный доступ (в т.ч. к сети raw)
-privileged: true
+privileged:
+  - NET_ADMIN
+  - NET_RAW
 
 options:
   address: ""
