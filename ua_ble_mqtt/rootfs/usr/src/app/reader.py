@@ -6,12 +6,23 @@ from dataclasses import dataclass
 from typing import Optional
 
 import paho.mqtt.client as mqtt
-from bleak import BleakClient, BleakScanner
+from bleak import BleakClient
 
 
 # Standard BLE UUIDs for Blood Pressure Service/Measurement
 BLOOD_PRESSURE_SERVICE = "00001810-0000-1000-8000-00805f9b34fb"
 BP_MEASUREMENT_CHAR = "00002a35-0000-1000-8000-00805f9b34fb"
+
+
+def normalize_mac(addr: str) -> str:
+    """
+    Accept: 6C:EC:EB:47:30:7F or 6CECEB47307F or 6c-ec-eb-47-30-7f
+    Return: 6C:EC:EB:47:30:7F
+    """
+    a = addr.strip().upper().replace("-", "").replace(":", "")
+    if len(a) != 12:
+        return addr.strip()
+    return ":".join(a[i:i + 2] for i in range(0, 12, 2))
 
 
 def mac_to_id(mac: str) -> str:
@@ -74,7 +85,7 @@ def parse_bp_measurement(data: bytes) -> BPReading:
     if flags & 0x02:
         if len(data) < idx + 7:
             raise ValueError("Packet too short for timestamp")
-        year = int.from_bytes(data[idx:idx+2], "little"); idx += 2
+        year = int.from_bytes(data[idx:idx + 2], "little"); idx += 2
         month = data[idx]; idx += 1
         day = data[idx]; idx += 1
         hour = data[idx]; idx += 1
@@ -86,7 +97,7 @@ def parse_bp_measurement(data: bytes) -> BPReading:
     if flags & 0x04:
         if len(data) < idx + 2:
             raise ValueError("Packet too short for pulse")
-        pulse_raw = int.from_bytes(data[idx:idx+2], "little")
+        pulse_raw = int.from_bytes(data[idx:idx + 2], "little")
         pulse = sfloat_to_float(pulse_raw)
         idx += 2
 
@@ -140,7 +151,14 @@ class MqttPublisher:
         self.client.publish(topic, payload, retain=retain)
 
 
-def publish_discovery(mq: MqttPublisher, discovery_prefix: str, device_id: str, device_name: str, base_topic: str, mac: str):
+def publish_discovery(
+    mq: MqttPublisher,
+    discovery_prefix: str,
+    device_id: str,
+    device_name: str,
+    base_topic: str,
+    mac: str,
+):
     """
     Create 3 MQTT-discovery sensors: systolic, diastolic, pulse.
     Uses a single JSON state topic.
@@ -179,19 +197,44 @@ def publish_discovery(mq: MqttPublisher, discovery_prefix: str, device_id: str, 
         }
         mq.publish_json(topic, payload, retain=True)
 
-    # Mark online
     mq.publish_str(availability_topic, "online", retain=True)
 
 
+def dump_bp_service_if_possible(client: BleakClient):
+    """
+    Try to print Blood Pressure service/characteristics.
+    Uses client.services property (compatible with many bleak versions).
+    """
+    try:
+        services = client.services
+        if not services:
+            print("[ble] services not available (yet)")
+            return
+
+        print(f"[ble] services={len(services)}")
+        for s in services:
+            if s.uuid.lower() == BLOOD_PRESSURE_SERVICE:
+                print(f"[ble] service {s.uuid}")
+                for ch in s.characteristics:
+                    print(f"[ble]  char {ch.uuid} props={ch.properties}")
+    except Exception as e:
+        print(f"[ble] services dump error: {e}")
+
+
 async def run_reader(args):
+    args.address = normalize_mac(args.address)
+    print(f"[addr] normalized={args.address}")
+
     device_id = mac_to_id(args.address)
+
     mq = MqttPublisher(args.mqtt_host, args.mqtt_port, args.mqtt_username, args.mqtt_password)
     mq.connect()
     print(f"[start] address={args.address} mqtt={args.mqtt_host}:{args.mqtt_port} base_topic={args.base_topic} publish_raw={args.publish_raw}")
+
     await mq.wait_connected(10)
 
     publish_discovery(
-        mq= mq,
+        mq=mq,
         discovery_prefix=args.discovery_prefix,
         device_id=device_id,
         device_name=args.device_name,
@@ -201,22 +244,22 @@ async def run_reader(args):
 
     state_topic = f"{args.base_topic}/{device_id}/state"
     raw_topic = f"{args.base_topic}/{device_id}/raw"
+    availability_topic = f"{args.base_topic}/{device_id}/availability"
 
     while True:
         try:
             print(f"[ble] Connecting to {args.address} ...")
-            async with BleakClient(args.address) as client:
+            async with BleakClient(args.address, timeout=20.0) as client:
                 print("[ble] Connected. Subscribing to BP measurement notifications...")
-                services = await client.get_services()
-                print(f"[ble] services={len(services)}")
-                for s in services:
-                    if "1810" in s.uuid:  # blood pressure service
-                        print(f"[ble] service {s.uuid}")
-                        for ch in s.characteristics:
-                            print(f"[ble]  char {ch.uuid} props={ch.properties}")
+
+                # Optional debug: dump BP service/characteristics if available
+                dump_bp_service_if_possible(client)
 
                 def on_notify(_char, data: bytearray):
                     b = bytes(data)
+                    if args.publish_raw:
+                        mq.publish_str(raw_topic, b.hex(), retain=False)
+
                     try:
                         reading = parse_bp_measurement(b)
                         payload = {
@@ -229,25 +272,19 @@ async def run_reader(args):
                         print(f"[bp] {payload}")
                         mq.publish_json(state_topic, payload, retain=True)
 
-                        if args.publish_raw:
-                            mq.publish_str(raw_topic, b.hex(), retain=False)
                     except Exception as e:
-                        print(f"[bp] parse/publish error: {e}")
-                        if args.publish_raw:
-                            mq.publish_str(raw_topic, b.hex(), retain=False)
+                        print(f"[bp] parse error: {e}")
 
                 await client.start_notify(BP_MEASUREMENT_CHAR, on_notify)
-                print("[ble] notify subscribed, waiting for measurement...")
 
-                # Keep running; BLE device usually sends only when measurement completes
+                print("[ble] notify subscribed, waiting for measurement...")
                 while True:
                     print("[tick] still waiting...")
-                    await asyncio.sleep(5)
+                    await asyncio.sleep(10)
 
         except Exception as e:
             print(f"[ble] Error: {e}. Reconnecting in {args.reconnect_seconds}s")
-            # mark offline
-            mq.publish_str(f"{args.base_topic}/{device_id}/availability", "offline", retain=True)
+            mq.publish_str(availability_topic, "offline", retain=True)
             await asyncio.sleep(args.reconnect_seconds)
 
 
@@ -265,12 +302,6 @@ def main():
     ap.add_argument("--reconnect-seconds", type=int, default=10)
     ap.add_argument("--publish-raw", action="store_true")
     args = ap.parse_args()
-
-# Normalize MAC: allow "6CECEB47307F" -> "6C:EC:EB:47:30:7F"
-    a = args.address.strip().upper().replace("-", "").replace(":", "")
-    if len(a) == 12:
-        args.address = ":".join(a[i:i+2] for i in range(0, 12, 2))
-    print(f"[addr] normalized={args.address}")
 
     asyncio.run(run_reader(args))
 
