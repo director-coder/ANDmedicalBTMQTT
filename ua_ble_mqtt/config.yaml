@@ -1,6 +1,6 @@
 name: "UA-BLE MQTT"
 slug: ua_ble_mqtt
-version: "0.2.3"
+version: "0.2.5"
 description: "Read UA-BLE via BLE and publish to MQTT (with Home Assistant MQTT Discovery)"
 arch: [aarch64, amd64, armv7, i386]
 startup: services
@@ -24,6 +24,10 @@ options:
   device_name: "AND-UA-BLE"
   reconnect_seconds: 10
   publish_raw: false
+  final_only: true
+  final_quiet_seconds: 2.0
+  idle_watchdog: 45
+  scan_timeout: 30
 
 schema:
   address: str
@@ -37,3 +41,7 @@ schema:
   device_name: str
   reconnect_seconds: int
   publish_raw: bool
+  final_only: bool
+  final_quiet_seconds: float
+  idle_watchdog: int
+  scan_timeout: int

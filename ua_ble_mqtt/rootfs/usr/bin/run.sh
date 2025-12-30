@@ -23,6 +23,11 @@ DEVICE_NAME=$(python -c "import json;print(json.load(open('$CONFIG')).get('devic
 RECONNECT=$(python -c "import json;print(int(json.load(open('$CONFIG')).get('reconnect_seconds',10)))")
 PUBLISH_RAW=$(python -c "import json;print(bool(json.load(open('$CONFIG')).get('publish_raw',False)))")
 
+FINAL_ONLY=$(python -c "import json;print(bool(json.load(open('$CONFIG')).get('final_only',True)))")
+FINAL_QUIET=$(python -c "import json;print(float(json.load(open('$CONFIG')).get('final_quiet_seconds',2.0)))")
+IDLE_WD=$(python -c "import json;print(int(json.load(open('$CONFIG')).get('idle_watchdog',45)))")
+SCAN_TO=$(python -c "import json;print(int(json.load(open('$CONFIG')).get('scan_timeout',30)))")
+
 echo "=== parsed: address=$ADDRESS mqtt_host=$MQTT_HOST ==="
 
 exec python -u /usr/src/app/reader.py \
@@ -36,4 +41,8 @@ exec python -u /usr/src/app/reader.py \
   --base-topic "$BASE_TOPIC" \
   --device-name "$DEVICE_NAME" \
   --reconnect-seconds "$RECONNECT" \
-  $( [ "$PUBLISH_RAW" = "True" ] && echo "--publish-raw" )
+  $( [ "$PUBLISH_RAW" = "True" ] && echo "--publish-raw" ) \
+  --final-quiet-seconds "$FINAL_QUIET" \
+  --idle-watchdog "$IDLE_WD" \
+  --scan-timeout "$SCAN_TO" \
+  $( [ "$FINAL_ONLY" = "True" ] && echo "--final-only" )
