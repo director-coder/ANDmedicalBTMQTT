@@ -237,9 +237,11 @@ async def run_reader(args):
                             mq.publish_str(raw_topic, b.hex(), retain=False)
 
                 await client.start_notify(BP_MEASUREMENT_CHAR, on_notify)
+                print("[ble] notify subscribed, waiting for measurement...")
 
                 # Keep running; BLE device usually sends only when measurement completes
                 while True:
+                    print("[tick] still waiting...")
                     await asyncio.sleep(5)
 
         except Exception as e:
