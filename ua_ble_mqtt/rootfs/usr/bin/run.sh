@@ -17,8 +17,8 @@ MQTT_USER=$(python -c "import json;print(json.load(open('$CONFIG')).get('mqtt_us
 MQTT_PASS=$(python -c "import json;print(json.load(open('$CONFIG')).get('mqtt_password',''))")
 
 DISCOVERY_PREFIX=$(python -c "import json;print(json.load(open('$CONFIG')).get('discovery_prefix','homeassistant'))")
-BASE_TOPIC=$(python -c "import json;print(json.load(open('$CONFIG')).get('base_topic','ua651ble'))")
-DEVICE_NAME=$(python -c "import json;print(json.load(open('$CONFIG')).get('device_name','UA-651BLE'))")
+BASE_TOPIC=$(python -c "import json;print(json.load(open('$CONFIG')).get('base_topic','anduable'))")
+DEVICE_NAME=$(python -c "import json;print(json.load(open('$CONFIG')).get('device_name','AND-UA-BLE'))")
 
 RECONNECT=$(python -c "import json;print(int(json.load(open('$CONFIG')).get('reconnect_seconds',10)))")
 PUBLISH_RAW=$(python -c "import json;print(bool(json.load(open('$CONFIG')).get('publish_raw',False)))")

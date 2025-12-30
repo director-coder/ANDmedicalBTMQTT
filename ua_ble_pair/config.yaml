@@ -1,7 +1,7 @@
-name: "UA651BLE Pairing"
-slug: ua651ble_pair
-version: "0.1.0"
-description: "Pair UA-651BLE via BlueZ/DBus on HAOS host"
+name: "UA-BLE Pairing"
+slug: anduable_pair
+version: "0.2.0"
+description: "Pair UA-BLE via BlueZ/DBus on HAOS host"
 arch:
   - aarch64
   - amd64
@@ -21,7 +21,7 @@ privileged:
 
 options:
   address: ""
-  name_hint: "UA-651"
+  name_hint: "UA-BLE"
   adapter: "hci0"
   discover_seconds: 30
 schema:

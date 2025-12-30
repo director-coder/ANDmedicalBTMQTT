@@ -101,7 +101,7 @@ def find_device_path(objects: dict, address: str, name_hint: str) -> str | None:
 async def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--address", default="")
-    ap.add_argument("--name-hint", default="UA-651")
+    ap.add_argument("--name-hint", default="UA-BLE")
     ap.add_argument("--adapter", default="hci0")
     ap.add_argument("--discover-seconds", type=int, default=30)
     args = ap.parse_args()
@@ -109,7 +109,7 @@ async def main():
     bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
 
     # 1) Регистрируем Agent
-    agent_path = "/ua651ble/agent"
+    agent_path = "/anduable/agent"
     agent = Agent()
     bus.export(agent_path, agent)
 
@@ -163,7 +163,7 @@ async def main():
         print(f"[pair] StopDiscovery error (ignored): {e}")
 
     if not device_path:
-        raise RuntimeError("Device not found. Put UA-651BLE into pairing mode and try again.")
+        raise RuntimeError("Device not found. Put UA-BLE into pairing mode and try again.")
 
     print(f"[pair] Found device: {device_path}")
 
