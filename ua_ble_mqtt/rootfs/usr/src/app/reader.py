@@ -288,7 +288,7 @@ async def run_reader(args):
 
                 print("[ble] notify subscribed, waiting for measurement...")
                 while True:
-                    print("[tick] still waiting...")
+  #                  print("[tick] still waiting...")
                     await asyncio.sleep(10)
 
         except Exception as e:
