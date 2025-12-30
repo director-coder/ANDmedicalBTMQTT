@@ -1,5 +1,10 @@
 #!/usr/bin/env sh
-set -eu
+set -eux  # <-- важно: -x печатает команды
+
+echo "=== ua_ble_mqtt run.sh START $(date -Iseconds) ==="
+echo "--- options.json ---"
+cat /data/options.json || true
+echo "--------------------"
 
 CONFIG=/data/options.json
 
@@ -18,7 +23,9 @@ DEVICE_NAME=$(python -c "import json;print(json.load(open('$CONFIG')).get('devic
 RECONNECT=$(python -c "import json;print(int(json.load(open('$CONFIG')).get('reconnect_seconds',10)))")
 PUBLISH_RAW=$(python -c "import json;print(bool(json.load(open('$CONFIG')).get('publish_raw',False)))")
 
-exec python /usr/src/app/reader.py \
+echo "=== parsed: address=$ADDRESS mqtt_host=$MQTT_HOST ==="
+
+exec python -u /usr/src/app/reader.py \
   --address "$ADDRESS" \
   --adapter "$ADAPTER" \
   --mqtt-host "$MQTT_HOST" \
