@@ -16,7 +16,6 @@ DEFAULT_SCAN_TIMEOUT = 30   # seconds
 
 
 def normalize_mac(addr: str) -> str:
-    """Accept 6C:EC:... or 6CEC... or 6c-ec-... and return 6C:EC:"""
     a = addr.strip().upper().replace("-", "").replace(":", "")
     if len(a) == 12:
         return ":".join(a[i:i + 2] for i in range(0, 12, 2))
@@ -30,7 +29,6 @@ def mac_to_id(mac: str) -> str:
 def sfloat_to_float(raw: int) -> Optional[float]:
     """
     IEEE-11073 SFLOAT (16-bit). Return None for special/invalid values.
-    Common special values:
       0x07FF = NaN
       0x07FE = +INF
       0x0802 = -INF
@@ -42,11 +40,8 @@ def sfloat_to_float(raw: int) -> Optional[float]:
     mantissa = raw & 0x0FFF
     exponent = (raw >> 12) & 0x000F
 
-    # sign extend mantissa 12-bit
     if mantissa >= 0x0800:
         mantissa -= 0x1000
-
-    # sign extend exponent 4-bit
     if exponent >= 0x08:
         exponent -= 0x10
 
@@ -63,10 +58,6 @@ class BPReading:
 
 
 def parse_bp_measurement(data: bytes) -> BPReading:
-    """
-    Parse Blood Pressure Measurement characteristic (0x2A35).
-    Filters intermediate frames by rejecting SFLOAT special values (NaN/NRes/INF).
-    """
     if len(data) < 7:
         raise ValueError("Packet too short")
 
@@ -85,7 +76,6 @@ def parse_bp_measurement(data: bytes) -> BPReading:
     ts_iso = None
     pulse = None
 
-    # Timestamp present
     if flags & 0x02:
         if len(data) < idx + 7:
             raise ValueError("Packet too short for timestamp")
@@ -97,43 +87,41 @@ def parse_bp_measurement(data: bytes) -> BPReading:
         second = data[idx]; idx += 1
         ts_iso = f"{year:04d}-{month:02d}-{day:02d}T{hour:02d}:{minute:02d}:{second:02d}"
 
-    # Pulse present
     if flags & 0x04:
         if len(data) < idx + 2:
             raise ValueError("Packet too short for pulse")
         pulse_raw = int.from_bytes(data[idx:idx + 2], "little")
         pulse = sfloat_to_float(pulse_raw)
 
-    # Reject intermediate/invalid frames
     if systolic is None or diastolic is None or map_v is None:
         raise ValueError("Intermediate/invalid BP frame (sfloat special)")
     if (flags & 0x04) and pulse is None:
         raise ValueError("Intermediate/invalid pulse frame (sfloat special)")
 
-    # Convert kPa -> mmHg if needed
     if unit_kpa:
         kpa_to_mmhg = 7.50062
         systolic *= kpa_to_mmhg
         diastolic *= kpa_to_mmhg
         map_v *= kpa_to_mmhg
 
-    return BPReading(
-        systolic=systolic,
-        diastolic=diastolic,
-        map=map_v,
-        pulse=pulse,
-        timestamp_iso=ts_iso
-    )
+    return BPReading(systolic, diastolic, map_v, pulse, ts_iso)
 
 
 class MqttPublisher:
+    """
+    MQTT publisher with:
+      - LWT (offline) on availability_topic
+      - auto online publish on connect
+    """
     def __init__(self, host: str, port: int, username: str, password: str):
         self.client = mqtt.Client()
         if username:
             self.client.username_pw_set(username, password or None)
+
         self.host = host
         self.port = port
         self._connected = asyncio.Event()
+        self.availability_topic: Optional[str] = None
 
         self.client.reconnect_delay_set(min_delay=1, max_delay=30)
 
@@ -141,6 +129,8 @@ class MqttPublisher:
             print(f"[mqtt] connected rc={rc}")
             if rc == 0:
                 self._connected.set()
+                if self.availability_topic:
+                    self.client.publish(self.availability_topic, "online", retain=True)
 
         def on_disconnect(_client, _userdata, rc):
             print(f"[mqtt] disconnected rc={rc}")
@@ -148,6 +138,11 @@ class MqttPublisher:
 
         self.client.on_connect = on_connect
         self.client.on_disconnect = on_disconnect
+
+    def set_availability_topic(self, topic: str):
+        self.availability_topic = topic
+        # LWT: if add-on dies / connection drops unexpectedly, HA sees offline
+        self.client.will_set(topic, "offline", retain=True)
 
     def connect(self):
         print(f"[mqtt] connecting to {self.host}:{self.port} ...")
@@ -166,19 +161,20 @@ class MqttPublisher:
 
 def publish_discovery(mq: MqttPublisher, discovery_prefix: str, device_id: str, device_name: str, base_topic: str, mac: str):
     """
-    MQTT Discovery for 3 sensors:
-      - systolic (mmHg) device_class=pressure
-      - diastolic (mmHg) device_class=pressure
-      - pulse (bpm) no device_class (to avoid HA weirdness with bpm)
+    Discovery:
+      - systolic, diastolic, pulse sensors from state_topic (retain)
+      - availability_topic = add-on availability (LWT)
+      - extra BLE status sensor from ble_status topic
     """
     state_topic = f"{base_topic}/{device_id}/state"
     availability_topic = f"{base_topic}/{device_id}/availability"
+    ble_status_topic = f"{base_topic}/{device_id}/ble_status"
 
     device_block = {
         "identifiers": [device_id],
         "name": device_name,
         "manufacturer": "A&D",
-        "model": "AND-UA-BLE",
+        "model": "UA-651BLE",
         "connections": [["mac", mac]],
     }
 
@@ -192,7 +188,7 @@ def publish_discovery(mq: MqttPublisher, discovery_prefix: str, device_id: str, 
         topic = f"{discovery_prefix}/sensor/{device_id}/{key}/config"
         payload = {
             "name": f"{device_name} {name}",
-            "unique_id": f"{device_id}_{key}_v2",  # bump to refresh HA entities
+            "unique_id": f"{device_id}_{key}_v3",
             "state_topic": state_topic,
             "availability_topic": availability_topic,
             "payload_available": "online",
@@ -204,14 +200,24 @@ def publish_discovery(mq: MqttPublisher, discovery_prefix: str, device_id: str, 
         }
         if device_class:
             payload["device_class"] = device_class
-
         mq.publish_json(topic, payload, retain=True)
 
-    mq.publish_str(availability_topic, "online", retain=True)
+    # BLE status sensor (string)
+    ble_topic = f"{discovery_prefix}/sensor/{device_id}/ble_status/config"
+    ble_payload = {
+        "name": f"{device_name} BLE Status",
+        "unique_id": f"{device_id}_ble_status_v1",
+        "state_topic": ble_status_topic,
+        "availability_topic": availability_topic,
+        "payload_available": "online",
+        "payload_not_available": "offline",
+        "icon": "mdi:bluetooth",
+        "device": device_block,
+    }
+    mq.publish_json(ble_topic, ble_payload, retain=True)
 
 
-async def wait_for_device(address: str, timeout: int = DEFAULT_SCAN_TIMEOUT):
-    """Scan until device appears (prevents futile connect attempts while it sleeps)."""
+async def wait_for_device(address: str, timeout: int):
     print(f"[ble] scanning for {address} (timeout {timeout}s) ...")
     dev = await BleakScanner.find_device_by_address(address, timeout=timeout)
     if dev is None:
@@ -240,45 +246,42 @@ async def run_reader(args):
     events_topic = f"{args.base_topic}/{device_id}/events"
     raw_topic = f"{args.base_topic}/{device_id}/raw"
     availability_topic = f"{args.base_topic}/{device_id}/availability"
+    ble_status_topic = f"{args.base_topic}/{device_id}/ble_status"
 
     print(
         f"[start] address={args.address} mqtt={args.mqtt_host}:{args.mqtt_port} "
         f"base_topic={args.base_topic} publish_raw={args.publish_raw} final_only={args.final_only}"
     )
 
-    # MQTT
+    # MQTT with LWT availability
     mq = MqttPublisher(args.mqtt_host, args.mqtt_port, args.mqtt_username, args.mqtt_password)
+    mq.set_availability_topic(availability_topic)
     mq.connect()
     await mq.wait_connected(10)
 
+    # Discovery
     publish_discovery(mq, args.discovery_prefix, device_id, args.device_name, args.base_topic, args.address)
 
-    # For "final_only" publish after quiet period
+    # Set initial BLE status (retained)
+    mq.publish_str(ble_status_topic, "idle", retain=True)
+
     debounce_task: Optional[asyncio.Task] = None
     last_payload: Optional[dict] = None
-
-    # Dedup events so we don't store the same measurement multiple times
     last_event_key: Optional[Tuple[str, float, float, float]] = None
 
-    async def publish_after_quiet(delay: float):
-        """Publish the last payload after a short quiet period, then emit an event."""
-        nonlocal last_payload, last_event_key
-        await asyncio.sleep(delay)
-        if not last_payload:
-            return
+    async def publish_state_and_event(payload: dict):
+        """Publish retained state + non-retained event with dedup."""
+        nonlocal last_event_key
 
-        # Retained "last known" state for HA sensors
-        mq.publish_json(state_topic, last_payload, retain=True)
-        print(f"[pub] state {last_payload}")
+        mq.publish_json(state_topic, payload, retain=True)
 
-        # Non-retained event stream (for history)
         event = {
-            "measurement_ts": last_payload.get("timestamp"),
+            "measurement_ts": payload.get("timestamp"),
             "received_ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            "systolic": last_payload["systolic"],
-            "diastolic": last_payload["diastolic"],
-            "map": last_payload.get("map"),
-            "pulse": last_payload.get("pulse"),
+            "systolic": payload["systolic"],
+            "diastolic": payload["diastolic"],
+            "map": payload.get("map"),
+            "pulse": payload.get("pulse"),
         }
         event_key = (str(event["measurement_ts"]), float(event["systolic"]), float(event["diastolic"]), float(event["pulse"]))
         if event_key != last_event_key:
@@ -288,26 +291,35 @@ async def run_reader(args):
         else:
             print("[event] duplicate skipped")
 
+    async def publish_after_quiet(delay: float):
+        nonlocal last_payload
+        await asyncio.sleep(delay)
+        if last_payload:
+            await publish_state_and_event(last_payload)
+            print(f"[pub] state {last_payload}")
+
     while True:
         try:
-            # Wait for device to appear (important for sleeping BLE devices)
+            mq.publish_str(ble_status_topic, "scanning", retain=True)
             await wait_for_device(args.address, timeout=args.scan_timeout)
 
+            mq.publish_str(ble_status_topic, "connecting", retain=True)
             print(f"[ble] Connecting to {args.address} ...")
+
             async with BleakClient(args.address, timeout=20.0) as client:
                 print("[ble] Connected. Subscribing to BP measurement...")
+                mq.publish_str(ble_status_topic, "connected", retain=True)
 
                 last_rx_ts = time.time()
 
                 def on_bp(_char, data: bytearray):
-                    nonlocal last_rx_ts, last_payload, debounce_task, last_event_key
+                    nonlocal last_rx_ts, last_payload, debounce_task
                     b = bytes(data)
                     last_rx_ts = time.time()
 
                     if args.publish_raw:
                         mq.publish_str(raw_topic, b.hex(), retain=False)
 
-                    # Parse; ignore intermediate frames silently
                     try:
                         r = parse_bp_measurement(b)
                     except Exception:
@@ -321,44 +333,28 @@ async def run_reader(args):
                         "timestamp": r.timestamp_iso or time.strftime("%Y-%m-%dT%H:%M:%S"),
                     }
 
-                    # Keep pulse numeric for HA pulse sensor; skip frames without pulse
+                    # Keep pulse numeric; skip if missing
                     if payload["pulse"] is None:
                         return
 
-                    # Store last valid payload
                     last_payload = payload
 
                     if not args.final_only:
-                        # Publish every valid frame as state + event (non-retained)
-                        mq.publish_json(state_topic, payload, retain=True)
+                        # publish every valid sample
+                        asyncio.create_task(publish_state_and_event(payload))
                         print(f"[bp] {payload}")
-
-                        event = {
-                            "measurement_ts": payload.get("timestamp"),
-                            "received_ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                            "systolic": payload["systolic"],
-                            "diastolic": payload["diastolic"],
-                            "map": payload.get("map"),
-                            "pulse": payload.get("pulse"),
-                        }
-                        event_key = (str(event["measurement_ts"]), float(event["systolic"]), float(event["diastolic"]), float(event["pulse"]))
-                        if event_key != last_event_key:
-                            mq.publish_json(events_topic, event, retain=False)
-                            last_event_key = event_key
-                            print(f"[event] {event}")
                         return
 
-                    # final_only: debounce publishing (publish once per measurement)
+                    # final_only: publish after quiet period
                     if debounce_task and not debounce_task.done():
                         debounce_task.cancel()
                     debounce_task = asyncio.create_task(publish_after_quiet(args.final_quiet_seconds))
 
                 await safe_start_notify(client, BP_MEASUREMENT_CHAR, on_bp, tries=3)
                 print("[ble] subscribed, waiting for measurement...")
+                mq.publish_str(ble_status_topic, "waiting", retain=True)
 
-                mq.publish_str(availability_topic, "online", retain=True)
-
-                # Heartbeat + watchdog: reconnect if the device is silent for too long
+                # Watchdog loop: if no notifications, reconnect (device likely slept/disconnected)
                 while True:
                     await asyncio.sleep(5)
                     idle = time.time() - last_rx_ts
@@ -370,7 +366,8 @@ async def run_reader(args):
             raise
         except Exception as e:
             print(f"[ble] Error: {e}. Reconnecting in {args.reconnect_seconds}s")
-            mq.publish_str(availability_topic, "offline", retain=True)
+            # NOTE: do NOT publish availability offline here (availability is LWT and add-on is alive)
+            mq.publish_str(ble_status_topic, "disconnected", retain=True)
             await asyncio.sleep(args.reconnect_seconds)
 
 
@@ -383,13 +380,12 @@ def main():
     ap.add_argument("--mqtt-username", default="")
     ap.add_argument("--mqtt-password", default="")
     ap.add_argument("--discovery-prefix", default="homeassistant")
-    ap.add_argument("--base-topic", default="anduable")
-    ap.add_argument("--device-name", default="AND-UA-BLE")
+    ap.add_argument("--base-topic", default="ua651ble")
+    ap.add_argument("--device-name", default="UA-651BLE")
     ap.add_argument("--reconnect-seconds", type=int, default=10)
 
     ap.add_argument("--publish-raw", action="store_true")
 
-    # Stabilization controls
     ap.add_argument("--final-only", action="store_true")
     ap.add_argument("--final-quiet-seconds", type=float, default=2.0)
     ap.add_argument("--idle-watchdog", type=int, default=DEFAULT_IDLE_WATCHDOG)
