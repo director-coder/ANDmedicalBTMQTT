@@ -4,6 +4,7 @@ from dbus_next.aio import MessageBus
 from dbus_next.service import ServiceInterface, method, dbus_property
 from dbus_next import Variant
 from dbus_next.constants import BusType
+from dbus_next import PropertyAccess
 
 BLUEZ = "org.bluez"
 OBJMGR_IFACE = "org.freedesktop.DBus.ObjectManager"
@@ -60,8 +61,8 @@ class Agent(ServiceInterface):
     def Cancel(self):
         print("[agent] Cancel")
 
-    @dbus_property()
-    def Capabilities(self) -> "s":  # noqa: F821
+    @dbus_property(access=PropertyAccess.READ)
+    def Capabilities(self) -> "s":              #noqa: F821
         return "NoInputNoOutput"
 
 
