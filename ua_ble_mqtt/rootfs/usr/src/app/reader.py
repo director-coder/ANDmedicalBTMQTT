@@ -109,10 +109,29 @@ class MqttPublisher:
             self.client.username_pw_set(username, password or None)
         self.host = host
         self.port = port
+        self._connected = asyncio.Event()
+
+        def on_connect(client, userdata, flags, rc):
+            print(f"[mqtt] connected rc={rc}")
+            self._connected.set()
+
+        def on_disconnect(client, userdata, rc):
+            print(f"[mqtt] disconnected rc={rc}")
+            self._connected.clear()
+
+        self.client.on_connect = on_connect
+        self.client.on_disconnect = on_disconnect
 
     def connect(self):
+        print(f"[mqtt] connecting to {self.host}:{self.port} ...")
         self.client.connect(self.host, self.port, keepalive=60)
         self.client.loop_start()
+
+    async def wait_connected(self, timeout: int = 10):
+        try:
+            await asyncio.wait_for(self._connected.wait(), timeout=timeout)
+        except asyncio.TimeoutError:
+            raise RuntimeError("MQTT connect timeout (check mqtt_host/mqtt_port)")
 
     def publish_json(self, topic: str, payload: dict, retain: bool = True):
         self.client.publish(topic, json.dumps(payload), retain=retain)
@@ -168,6 +187,8 @@ async def run_reader(args):
     device_id = mac_to_id(args.address)
     mq = MqttPublisher(args.mqtt_host, args.mqtt_port, args.mqtt_username, args.mqtt_password)
     mq.connect()
+    print(f"[start] address={args.address} mqtt={args.mqtt_host}:{args.mqtt_port} base_topic={args.base_topic} publish_raw={args.publish_raw}")
+    await mq.wait_connected(10)
 
     publish_discovery(
         mq= mq,
@@ -186,6 +207,13 @@ async def run_reader(args):
             print(f"[ble] Connecting to {args.address} ...")
             async with BleakClient(args.address) as client:
                 print("[ble] Connected. Subscribing to BP measurement notifications...")
+                services = await client.get_services()
+                print(f"[ble] services={len(services)}")
+                for s in services:
+                    if "1810" in s.uuid:  # blood pressure service
+                        print(f"[ble] service {s.uuid}")
+                        for ch in s.characteristics:
+                            print(f"[ble]  char {ch.uuid} props={ch.properties}")
 
                 def on_notify(_char, data: bytearray):
                     b = bytes(data)
