@@ -123,6 +123,18 @@ async def main():
 
     # 2) Находим адаптер
     objects = await get_managed_objects(bus)
+
+# DEBUG: показать всё, что видим во время сканирования
+    for path, ifaces in objects.items():
+        dev = ifaces.get(DEVICE_IFACE)
+        if not dev:
+            continue
+        addr = dev.get("Address")
+        name = dev.get("Name")
+        rssi = dev.get("RSSI")
+        if addr and name:
+            print(f"[scan] {addr.value}  {name.value}  rssi={getattr(rssi,'value',None)}  path={path}")
+
     adapter_path = find_adapter_path(objects, args.adapter)
 
     ad_intro = await bus.introspect(BLUEZ, adapter_path)
