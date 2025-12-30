@@ -29,10 +29,18 @@ def mac_to_id(mac: str) -> str:
     return mac.lower().replace(":", "")
 
 
-def sfloat_to_float(raw: int) -> float:
+def sfloat_to_float(raw: int) -> Optional[float]:
     """
-    IEEE-11073 SFLOAT (16-bit): 12-bit mantissa, 4-bit exponent (base 10).
+    IEEE-11073 SFLOAT (16-bit). Returns None for special invalid values.
+    Special values:
+      0x07FF = NaN
+      0x07FE = +INF
+      0x0802 = -INF
+      0x0800 = NRes
     """
+    if raw in (0x07FF, 0x07FE, 0x0802, 0x0800):
+        return None
+
     mantissa = raw & 0x0FFF
     exponent = (raw >> 12) & 0x000F
 
@@ -58,17 +66,12 @@ class BPReading:
 
 
 def parse_bp_measurement(data: bytes) -> BPReading:
-    """
-    Parse Blood Pressure Measurement characteristic (0x2A35).
-    Format per Bluetooth Blood Pressure Service spec.
-    """
     if len(data) < 1 + 6:
         raise ValueError("Packet too short for BP measurement")
 
     flags = data[0]
-    unit_kpa = bool(flags & 0x01)  # 0=mmHg, 1=kPa
+    unit_kpa = bool(flags & 0x01)
 
-    # Compound value: 3 x SFLOAT (systolic, diastolic, MAP)
     sys_raw = int.from_bytes(data[1:3], "little")
     dia_raw = int.from_bytes(data[3:5], "little")
     map_raw = int.from_bytes(data[5:7], "little")
@@ -81,11 +84,10 @@ def parse_bp_measurement(data: bytes) -> BPReading:
     ts_iso = None
     pulse = None
 
-    # Timestamp present
     if flags & 0x02:
         if len(data) < idx + 7:
             raise ValueError("Packet too short for timestamp")
-        year = int.from_bytes(data[idx:idx + 2], "little"); idx += 2
+        year = int.from_bytes(data[idx:idx+2], "little"); idx += 2
         month = data[idx]; idx += 1
         day = data[idx]; idx += 1
         hour = data[idx]; idx += 1
@@ -93,15 +95,21 @@ def parse_bp_measurement(data: bytes) -> BPReading:
         second = data[idx]; idx += 1
         ts_iso = f"{year:04d}-{month:02d}-{day:02d}T{hour:02d}:{minute:02d}:{second:02d}"
 
-    # Pulse Rate present
     if flags & 0x04:
         if len(data) < idx + 2:
             raise ValueError("Packet too short for pulse")
-        pulse_raw = int.from_bytes(data[idx:idx + 2], "little")
+        pulse_raw = int.from_bytes(data[idx:idx+2], "little")
         pulse = sfloat_to_float(pulse_raw)
         idx += 2
 
-    # If unit is kPa, convert to mmHg for HA-friendly display
+    # --- NEW: ignore "invalid / intermediate" frames ---
+    # If any key field is None, treat as non-final measurement
+    if systolic is None or diastolic is None or map_v is None:
+        raise ValueError("Intermediate/invalid BP frame (sfloat special)")
+    if (flags & 0x04) and pulse is None:
+        raise ValueError("Intermediate/invalid pulse frame (sfloat special)")
+    # ---------------------------------------------------
+
     unit = "kPa" if unit_kpa else "mmHg"
     if unit_kpa:
         kpa_to_mmhg = 7.50062
@@ -111,6 +119,7 @@ def parse_bp_measurement(data: bytes) -> BPReading:
         unit = "mmHg"
 
     return BPReading(systolic=systolic, diastolic=diastolic, map=map_v, pulse=pulse, timestamp_iso=ts_iso, unit=unit)
+
 
 
 class MqttPublisher:
