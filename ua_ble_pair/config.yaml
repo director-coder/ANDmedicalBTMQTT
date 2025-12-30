@@ -1,0 +1,29 @@
+name: "UA651BLE Pairing"
+slug: ua651ble_pair
+version: "0.1.0"
+description: "Pair UA-651BLE via BlueZ/DBus on HAOS host"
+arch:
+  - aarch64
+  - amd64
+  - armv7
+  - i386
+startup: services
+boot: manual
+init: false
+
+# ВАЖНО: доступ к хостовому DBus, где живёт BlueZ
+host_dbus: true
+
+# Для BLE часто требуется расширенный доступ (в т.ч. к сети raw)
+privileged: true
+
+options:
+  address: ""
+  name_hint: "UA-651"
+  adapter: "hci0"
+  discover_seconds: 30
+schema:
+  address: str?
+  name_hint: str?
+  adapter: str
+  discover_seconds: int
