@@ -1,6 +1,6 @@
 name: "UA-BLE MQTT"
 slug: ua_ble_mqtt
-version: "0.3.5"
+version: "0.4.0"
 description: "Read UA-BLE via BLE and publish to MQTT (with Home Assistant MQTT Discovery)"
 arch: [aarch64, amd64, armv7, i386]
 startup: services

@@ -174,7 +174,7 @@ def publish_discovery(mq: MqttPublisher, discovery_prefix: str, device_id: str, 
         "identifiers": [device_id],
         "name": device_name,
         "manufacturer": "A&D",
-        "model": "UA-651BLE",
+        "model": "AND-UA-BLE",
         "connections": [["mac", mac]],
     }
 
@@ -380,8 +380,8 @@ def main():
     ap.add_argument("--mqtt-username", default="")
     ap.add_argument("--mqtt-password", default="")
     ap.add_argument("--discovery-prefix", default="homeassistant")
-    ap.add_argument("--base-topic", default="ua651ble")
-    ap.add_argument("--device-name", default="UA-651BLE")
+    ap.add_argument("--base-topic", default="anduable")
+    ap.add_argument("--device-name", default="AND-UA-BLE")
     ap.add_argument("--reconnect-seconds", type=int, default=10)
 
     ap.add_argument("--publish-raw", action="store_true")
