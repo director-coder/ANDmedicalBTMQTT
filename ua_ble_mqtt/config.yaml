@@ -1,0 +1,39 @@
+name: "UA-BLE MQTT"
+slug: ua_ble_mqtt
+version: "0.1.0"
+description: "Read UA-BLE via BLE and publish to MQTT (with Home Assistant MQTT Discovery)"
+arch: [aarch64, amd64, armv7, i386]
+startup: services
+boot: auto
+init: false
+
+host_dbus: true
+privileged:
+  - NET_ADMIN
+  - NET_RAW
+
+options:
+  address: ""
+  adapter: "hci0"
+  mqtt_host: "core-mosquitto"
+  mqtt_port: 1883
+  mqtt_username: ""
+  mqtt_password: ""
+  discovery_prefix: "homeassistant"
+  base_topic: "ua651ble"
+  device_name: "UA-651BLE"
+  reconnect_seconds: 10
+  publish_raw: false
+
+schema:
+  address: str
+  adapter: str
+  mqtt_host: str
+  mqtt_port: int
+  mqtt_username: str?
+  mqtt_password: password?
+  discovery_prefix: str
+  base_topic: str
+  device_name: str
+  reconnect_seconds: int
+  publish_raw: bool
