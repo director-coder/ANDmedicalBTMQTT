@@ -266,6 +266,12 @@ def main():
     ap.add_argument("--publish-raw", action="store_true")
     args = ap.parse_args()
 
+# Normalize MAC: allow "6CECEB47307F" -> "6C:EC:EB:47:30:7F"
+    a = args.address.strip().upper().replace("-", "").replace(":", "")
+    if len(a) == 12:
+        args.address = ":".join(a[i:i+2] for i in range(0, 12, 2))
+    print(f"[addr] normalized={args.address}")
+
     asyncio.run(run_reader(args))
 
 
