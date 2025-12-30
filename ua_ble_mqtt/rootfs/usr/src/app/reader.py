@@ -186,7 +186,7 @@ def publish_discovery(
     sensors = [
         ("systolic", "Systolic", "mmHg", "pressure", "{{ value_json.systolic }}"),
         ("diastolic", "Diastolic", "mmHg", "pressure", "{{ value_json.diastolic }}"),
-        ("pulse", "Pulse", "bpm", "frequency", "{{ value_json.pulse }}"),
+        ("pulse", "Pulse", "bpm", None, "{{ value_json.pulse }}"),
     ]
 
     for key, name, unit, device_class, template in sensors:
@@ -199,11 +199,12 @@ def publish_discovery(
             "payload_available": "online",
             "payload_not_available": "offline",
             "unit_of_measurement": unit,
-            "device_class": device_class,
             "state_class": "measurement",
             "value_template": template,
             "device": device_block,
         }
+        if device_class:
+            payload["device_class"] = device_class
         mq.publish_json(topic, payload, retain=True)
 
     mq.publish_str(availability_topic, "online", retain=True)
